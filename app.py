@@ -1,4 +1,5 @@
 import streamlit as st
+from modules.ocr_engine import extract_text_from_image
 
 # --- 1. KONFIGURASI DASAR UI MOBILE ---
 st.set_page_config(
@@ -62,8 +63,19 @@ with tab_galeri:
 if st.session_state.uploaded_image is not None:
     st.write("---")
     st.write("### Pratinjau Catatan")
-    
     st.image(st.session_state.uploaded_image, caption="Catatan ini siap diproses", use_container_width=True)
     
+    # Ketika tombol ini diklik oleh pengguna
     if st.button("Ekstrak Teks & Buat Ringkasan", type="primary", use_container_width=True):
-        st.warning("⚠️ Logika Ekstraksi OCR dan NLP belum terhubung. Ini adalah tugas kita selanjutnya!")
+        
+        # Tampilkan efek animasi loading professional
+        with st.spinner("⏳ Menghubungi mesin OCR... Sedang membaca teks pada gambar..."):
+            
+            # Panggil fungsi dari ruang mesin ocr_engine.py
+            raw_text_result = extract_text_from_image(st.session_state.uploaded_image)
+            
+        # Tampilkan hasil ekstraksi teks mentah di layar
+        st.write("### 📝 Hasil Ekstraksi Teks Mentah:")
+        st.text_area(label="Teks Terdeteksi", value=raw_text_result, height=250)
+        
+        st.info("💡 Langkah selanjutnya: Kita akan mengirim teks di atas ke API NLP untuk diringkas otomatis!")
