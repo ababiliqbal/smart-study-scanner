@@ -87,3 +87,11 @@ if st.session_state.uploaded_image is not None:
 
          st.write("### 🎯 Ringkasan Cerdas:")
          st.success(summary_result)
+         
+         st.write("---")
+         # Tombol sekunder untuk mereset aplikasi
+         if st.button("🔄 Pindai Catatan Lain", type="secondary", use_container_width=True):
+            # Mengosongkan brankas memori
+            st.session_state.uploaded_image = None
+            # Memaksa Streamlit untuk me-refresh halaman ke kondisi awal
+            st.rerun()
