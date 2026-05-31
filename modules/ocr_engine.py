@@ -1,9 +1,15 @@
+import sys
 import pytesseract
 from PIL import Image
 import io
 
-# --- KONFIGURASI PATH TESSERACT ---
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# --- KONFIGURASI LINTAS PLATFORM (CROSS-PLATFORM CONFIG) ---
+# Deteksi sistem operasi: Jika berjalan di Windows (Laptop lokal)
+if sys.platform.startswith('win'):
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Jika berjalan di Linux (Streamlit Cloud), jalurnya berbeda
+elif sys.platform.startswith('linux'):
+    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
 
 def extract_text_from_image(image_bytes) -> str:
     try:
