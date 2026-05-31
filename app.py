@@ -1,5 +1,6 @@
 import streamlit as st
 from modules.ocr_engine import extract_text_from_image
+from modules.nlp_engine import summarize_text
 
 # --- 1. KONFIGURASI DASAR UI MOBILE ---
 st.set_page_config(
@@ -78,4 +79,11 @@ if st.session_state.uploaded_image is not None:
         st.write("### 📝 Hasil Ekstraksi Teks Mentah:")
         st.text_area(label="Teks Terdeteksi", value=raw_text_result, height=250)
         
-        st.info("💡 Langkah selanjutnya: Kita akan mengirim teks di atas ke API NLP untuk diringkas otomatis!")
+        if not raw_text_result.startswith("Sistem tidak mendeteksi") and not raw_text_result.startswith("Terjadi kesalahan"):
+
+         with st.spinner("🧠 Mengirim teks ke AI untuk diringkas..."):
+             # Kirim teks mentah dari OCR ke mesin NLP
+             summary_result = summarize_text(raw_text_result)
+
+         st.write("### 🎯 Ringkasan Cerdas:")
+         st.success(summary_result)
