@@ -14,7 +14,7 @@ if not HF_API_TOKEN:
 
 client = InferenceClient(api_key=HF_API_TOKEN)
 # Menggunakan VLM tingkat atas dari Qwen
-MODEL_ID = "Qwen/Qwen3.5-9B:together" 
+MODEL_ID = "google/gemma-3-12b-it-qat-q4_0-unquantized:featherless-ai" 
 
 # --- 2. KONTRAK FUNGSI UTAMA ---
 def analyze_document(base64_image: str) -> dict:
@@ -114,6 +114,7 @@ def analyze_document(base64_image: str) -> dict:
         
         # Daftar model yang akan dicoba berurutan jika salah satu mati/tidak didukung
         model_fallbacks = [
+            "google/gemma-3-12b-it-qat-q4_0-unquantized:featherless-ai",
             "Qwen/Qwen3.5-9B:together",
             "Qwen/Qwen3-VL-8B-Instruct:novita",
         ]
