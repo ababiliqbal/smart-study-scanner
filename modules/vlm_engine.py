@@ -32,9 +32,10 @@ def analyze_document(base64_image: str) -> dict:
     4. Sintesis data menjadi poin ringkasan, pasangan istilah-definisi (flashcard), dan kuis dengan pengecoh (distractor) yang masuk akal.
 
     ATURAN MUTLAK (MITIGASI HALUSINASI & FORMATTING):
-    1. ZERO-HALLUCINATION: Anda DILARANG KERAS menggunakan data latih atau pengetahuan dari luar. Seluruh isi ringkasan, flashcard, dan kuis WAJIB 100% bersumber dari teks yang terdeteksi pada gambar.
-    2. STRICT OUTPUT: Anda HANYA diizinkan merespons dengan struktur JSON mentah yang valid. DILARANG menyertakan teks pengantar, penutup, pemikiran (thought process), atau bahkan *markdown code blocks* (seperti ```json).
-    3. ERROR HANDLING: Jika gambar TIDAK berisi dokumen/teks edukasi, Anda WAJIB mengembalikan JSON ini secara persis:
+    1. KUANTITAS WAJIB: Anda WAJIB menghasilkan MINIMAL 3 soal kuis yang berbeda dan 3-5 flashcard. Jika teks terlalu pendek, pecah satu informasi menjadi beberapa sudut pandang pertanyaan agar kuota 3 soal kuis TETAP TERPENUHI.
+    2. ZERO-HALLUCINATION: Anda DILARANG KERAS menggunakan data latih atau pengetahuan dari luar. Seluruh isi ringkasan, flashcard, dan kuis WAJIB 100% bersumber dari teks yang terdeteksi pada gambar.
+    3. STRICT OUTPUT: Anda HANYA diizinkan merespons dengan struktur JSON mentah yang valid. DILARANG menyertakan teks pengantar, penutup, pemikiran (thought process), atau bahkan *markdown code blocks* (seperti ```json).
+    4. ERROR HANDLING: Jika gambar TIDAK berisi dokumen/teks edukasi, Anda WAJIB mengembalikan JSON ini secara persis:
     {"error": "Teks edukasi tidak ditemukan pada gambar."}
 
     SKEMA JSON YANG DIWAJIBKAN:
@@ -51,7 +52,29 @@ def analyze_document(base64_image: str) -> dict:
         ],
         "kuis": [
             {
-                "pertanyaan": "Pertanyaan evaluasi yang menguji pemahaman dari teks",
+                "pertanyaan": "Pertanyaan evaluasi 1 yang menguji pemahaman dari teks",
+                "opsi": [
+                    "Jawaban Benar",
+                    "Pengecoh Logis A",
+                    "Pengecoh Logis B",
+                    "Pengecoh Logis C"
+                ],
+                "jawaban_benar": "Jawaban Benar (harus sama persis dengan salah satu string di dalam array opsi)",
+                "penjelasan": "Alasan mengapa jawaban benar berdasarkan informasi spesifik pada gambar."
+            },
+            {
+                "pertanyaan": "Pertanyaan evaluasi 2 yang menguji pemahaman dari teks",
+                "opsi": [
+                    "Jawaban Benar",
+                    "Pengecoh Logis A",
+                    "Pengecoh Logis B",
+                    "Pengecoh Logis C"
+                ],
+                "jawaban_benar": "Jawaban Benar (harus sama persis dengan salah satu string di dalam array opsi)",
+                "penjelasan": "Alasan mengapa jawaban benar berdasarkan informasi spesifik pada gambar."
+            },
+            {
+                "pertanyaan": "Pertanyaan evaluasi 3 yang menguji pemahaman dari teks",
                 "opsi": [
                     "Jawaban Benar",
                     "Pengecoh Logis A",
