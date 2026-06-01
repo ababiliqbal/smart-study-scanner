@@ -1,9 +1,10 @@
 import io
 import csv
 from PIL import Image
+import time 
 import streamlit as st
 from modules.vision_utils import compress_image, image_to_base64
-from modules.vlm_engine import analyze_document
+from modules.vlm_engine import run_map_reduce_pipeline
 
 # --- 1. KONFIGURASI DASAR UI MOBILE ---
 st.set_page_config(
@@ -35,7 +36,7 @@ def generate_csv_from_flashcards(flashcards_data: list) -> bytes:
 
 # --- 2. INISIALISASI BRANKAS MEMORI (SESSION STATE) ---
 if "uploaded_image" not in st.session_state:
-    st.session_state.uploaded_image = None                
+    st.session_state.uploaded_images = []                
 if "processed_data" not in st.session_state:
     st.session_state.processed_data = None  
 if "quiz_submitted" not in st.session_state:
@@ -54,87 +55,134 @@ st.markdown("Unggah foto catatanmu, dan biarkan sistem merangkum poin pentingnya
 st.write("---")
 
 # --- 5. LOGIKA VALIDASI (ERROR HANDLING) ---
-def validate_and_save_image(image_file):
-    if image_file is not None:
-        # Pengecekan Kondisi Buruk: Ukuran file melebihi batas
-        if image_file.size > MAX_FILE_SIZE_BYTES:
-            st.error(f"❌ Akses Ditolak: Ukuran file {image_file.size / (1024*1024):.2f} MB. Maksimal {MAX_FILE_SIZE_MB} MB untuk menjaga stabilitas memori.")
-            # Hapus dari memori jika file tidak valid
-            st.session_state.uploaded_image = None 
-            return False
-        
-        # Pengecekan Kondisi Baik: File valid
+def validate_and_save_images(input_data):
+    if input_data:
+        # 1. NORMALISASI TIPE DATA
+        if not isinstance(input_data, list):
+            files = [input_data]
         else:
-            st.success("✅ Gambar lolos validasi ukuran dan format!")
-            # Kunci gambar di dalam brankas memori
-            st.session_state.uploaded_image = image_file
-            return True
+            files = input_data
+            
+        # 2. MITIGASI SKENARIO EKSTRIM #2 (Batas Token / Amnesia AI)
+        if len(files) > 5:
+            st.error("🛑 Akses Ditolak: Maksimal 5 gambar dalam satu sesi untuk menjaga kestabilan ingatan AI.")
+            st.session_state.uploaded_images = []
+            return False
+            
+        # 3. MITIGASI SKENARIO EKSTRIM #1 (Batas Memori / OOM)
+        total_size_bytes = sum(f.size for f in files)
+        total_size_mb = total_size_bytes / (1024 * 1024)
+        MAX_TOTAL_SIZE_MB = 20 # Batas aman yang baru
+        
+        if total_size_mb > MAX_TOTAL_SIZE_MB:
+            st.error(f"🛑 Akses Ditolak: Total ukuran {total_size_mb:.2f} MB. Maksimal akumulasi unggahan adalah {MAX_TOTAL_SIZE_MB} MB.")
+            st.session_state.uploaded_images = []
+            return False
+            
+        # 4. SKENARIO BAIK (Lolos Validasi)
+        st.success(f"✅ {len(files)} Gambar lolos validasi ukuran dan format!")
+        
+        # Kunci gambar di dalam brankas memori sebagai LIST
+        st.session_state.uploaded_images = files
+        return True
+        
     return False
 
 # --- 6. INGESTION (PEMILIHAN METODE INPUT) ---
-st.write("### Langkah 1: Pilih Sumber Catatan")
+st.write("### Langkah 1: Unggah Catatan")
 
-# Menggunakan Tabs (Tabulasi) adalah praktik UX terbaik untuk layar kecil/HP
-tab_kamera, tab_galeri = st.tabs(["📸 Kamera", "📂 Galeri"])
+# Memberikan edukasi UX kepada pengguna HP bahwa mereka tetap bisa memotret langsung
+st.info("💡 **Tips Pengguna HP:** Saat menekan tombol 'Browse files' di bawah, Anda dapat memilih opsi **'Kamera'** dari sistem HP Anda untuk langsung memotret catatan dengan hasil yang jauh lebih tajam.")
 
-# Skenario A: Input Kamera
-with tab_kamera:
-    st.info("Pastikan ruangan cukup terang agar teks mudah dibaca oleh AI.")
-    camera_photo = st.camera_input("Ambil Foto Catatan")
-    if camera_photo:
-        validate_and_save_image(camera_photo)
+# Kita hanya menggunakan satu pintu masuk utama
+uploaded_files = st.file_uploader(
+    "Pilih foto dari memori perangkat atau potret langsung (Maks. 5 Halaman)", 
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
+)
 
-# Skenario B: Input File dari Galeri
-with tab_galeri:
-    gallery_photo = st.file_uploader("Pilih foto dari memori perangkat", type=ALLOWED_TYPES)
-    if gallery_photo:
-         validate_and_save_image(gallery_photo)
+if uploaded_files:
+    validate_and_save_images(uploaded_files)
 
 # --- 7. PRESENTASI HASIL INPUT & TOMBOL LANJUTAN ---
-if st.session_state.uploaded_image is not None:
+if st.session_state.uploaded_images:
     st.write("---")
     st.write("### Pratinjau Catatan")
-    st.image(st.session_state.uploaded_image, caption="Catatan ini siap diproses", use_container_width=True)
+    st.success(f"Terdapat {len(st.session_state.uploaded_images)} halaman catatan di memori.")
+    
+    # Menggunakan expander agar UI tidak penuh oleh gambar-gambar besar
+    with st.expander("📸 Lihat Pratinjau Dokumen", expanded=False):
+        # Melakukan perulangan untuk menggambar setiap foto di dalam List
+        for idx, img in enumerate(st.session_state.uploaded_images):
+            st.image(img, caption=f"Halaman {idx + 1}", use_container_width=True)
     
     # Ketika tombol ini diklik oleh pengguna
     if st.button("Proses Catatan", type="primary", use_container_width=True):
             
-            if st.session_state.uploaded_image is None:
-                st.warning("⚠️ Tidak ada gambar di memori. Silakan unggah atau potret gambar terlebih dahulu.")
+            if not st.session_state.uploaded_images:
+                st.warning("⚠️ Tidak ada gambar di memori. Silakan unggah catatan terlebih dahulu.")
             else:
-                # Mengubah indikator teks agar pengguna sadar bahwa AI sedang "Melihat"
-                with st.spinner("👁️🧠 AI sedang melihat dan menganalisis catatanmu..."):
-                    try:
-                        gambar_aktif = st.session_state.uploaded_image
+                # --- UI ASINKRON (Mitigasi Skenario #4) ---
+                # Membuat elemen kosong (placeholder) yang bisa diubah teksnya secara dinamis
+                status_text = st.empty()
+                progress_bar = st.progress(0)
+                
+                try:
+                    daftar_base64 = []
+                    total_gambar = len(st.session_state.uploaded_images)
+                    
+                    status_text.info("Mempersiapkan ruang kerja memori...")
+                    
+                    # --- FASE 1: PRA-PEMROSESAN LOKAL (ITERASI) ---
+                    for i, file_gambar in enumerate(st.session_state.uploaded_images):
                         
-                        if isinstance(gambar_aktif, Image.Image):
-                            img_pil = gambar_aktif
+                        # Mengubah teks indikator agar UI terasa 'hidup'
+                        status_text.info(f"⚙️ Memampatkan dan mengenkode gambar {i+1} dari {total_gambar}...")
+                        
+                        # Transformasi Tipe Data
+                        if isinstance(file_gambar, Image.Image):
+                            img_pil = file_gambar
                         else:
-                            img_pil = Image.open(gambar_aktif)
+                            img_pil = Image.open(file_gambar)
                             
-                        # 1. PRA-PEMROSESAN (Mitigasi Skenario Ekstrim #1: Mencegah OOM/Timeout)
+                        # Kompresi & Encoding
                         gambar_kompresi = compress_image(img_pil)
-                        
-                        # 2. ENCODING BASE64
                         base64_str = image_to_base64(gambar_kompresi)
                         
-                        # 3. INFERENSI VLM MULTIMODAL
-                        response = analyze_document(base64_str)
+                        daftar_base64.append(base64_str)
                         
-                        # 4. PENANGANAN RESPON
-                        if response["status"] == "success":
-                            # Menyimpan hasil akhir ke memori
-                            st.session_state.processed_data = response["data"]
+                        # Update Progress Bar (Kita alokasikan 30% perjalanan untuk fase lokal ini)
+                        persentase = int(((i + 1) / total_gambar) * 30)
+                        progress_bar.progress(persentase)
+                        
+                    # --- PERSIAPAN MENUJU FASE MAP-REDUCE ---
+                    status_text.warning("🚀 Mengirim data ke otak AI. Proses sintesis Map-Reduce sedang berlangsung (Bisa memakan waktu 30-60 detik)...")
+                    
+                    # 3. EKSEKUSI ORKESTRATOR (Mengirim daftar Base64 ke vlm_engine.py)
+                    response = run_map_reduce_pipeline(daftar_base64)
+                    
+                    # 4. PENYELESAIAN VISUAL
+                    # Mengisi progress bar menjadi 100% karena proses API telah selesai
+                    progress_bar.progress(100)
+                    
+                    # 5. PENANGANAN RESPON
+                    if response["status"] == "success":
+                        # Menyimpan hasil akhir (1 JSON Terpadu) ke memori
+                        st.session_state.processed_data = response["data"]
+                        st.session_state.quiz_submitted = False
+                        st.session_state.user_answers = {}
+                        
+                        status_text.success("✅ Pemrosesan Multi-Halaman berhasil! Merender antarmuka...")
+                        time.sleep(1.5) # Memberi jeda agar pengguna sempat membaca pesan sukses
+                        st.rerun() 
+                    else:
+                        st.error(f"🛑 Gagal memproses AI: {response['message']}")
+                        status_text.empty()
+                        progress_bar.empty()
                             
-                            st.session_state.quiz_submitted = False
-                            st.session_state.user_answers = {}
-                            st.rerun() 
-                        else:
-                            # Jika Skenario Ekstrim #2, #3, atau #4 terjadi, pesan error-nya akan muncul di sini
-                            st.error(f"🛑 Gagal memproses AI: {response['message']}")
-                            
-                    except Exception as e:
-                        st.error(f"⚙️ Terjadi kesalahan sistem internal: {str(e)}")
+                except Exception as e:
+                    st.error(f"⚙️ Terjadi kesalahan sistem internal: {str(e)}")
+                    progress_bar.empty() # Sembunyikan progress bar jika error
 
 
 if st.session_state.processed_data:
@@ -158,13 +206,11 @@ if st.session_state.processed_data:
         st.caption("✨ *Dianalisis secara visual menggunakan Vision-Language Model.*")
         st.write("---")
         
-        ringkasan_list = data.get("ringkasan", [])
+        # Mengambil string markdown dari JSON (default ke string kosong jika tidak ada)
+        ringkasan_markdown = data.get("ringkasan", "Tidak ada ringkasan yang tersedia.")
         
-        if isinstance(ringkasan_list, list):
-            for poin in ringkasan_list:
-                st.markdown(f"- {poin}")
-        else:
-            st.write(ringkasan_list)
+        # Merender string tersebut sebagai elemen HTML/Markdown kaya
+        st.markdown(ringkasan_markdown)
             
     
     # TAB 2: KUIS & AUTOMATED GRADING
@@ -268,7 +314,7 @@ if st.session_state.processed_data:
     # --- SIKLUS UX BERULANG (RESET) ---
     st.write("---")
     if st.button("🔄 Pindai Catatan Baru", type="secondary", use_container_width=True):
-        st.session_state.uploaded_image = None
+        st.session_state.uploaded_images = []  # Kembalikan ke List kosong
         st.session_state.processed_data = None
         st.session_state.quiz_submitted = False
         st.session_state.user_answers = {}

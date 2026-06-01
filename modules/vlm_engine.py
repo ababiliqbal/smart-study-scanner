@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 from huggingface_hub.errors import HfHubHTTPError
@@ -14,169 +15,144 @@ if not HF_API_TOKEN:
 
 client = InferenceClient(api_key=HF_API_TOKEN)
 # Menggunakan VLM tingkat atas dari Qwen
-MODEL_ID = "google/gemma-3-12b-it-qat-q4_0-unquantized:featherless-ai" 
+MODEL_ID1 = "Qwen/Qwen3-Coder-Next:featherless-ai" 
+MODEL_ID2 = "Qwen/Qwen3.5-9B:together" 
 
-# --- 2. KONTRAK FUNGSI UTAMA ---
-def analyze_document(base64_image: str) -> dict:
+# --- 2. FASE MAP: EKSTRAKSI VISUAL (MODEL_ID2: Qwen VLM) ---
+def extract_text_map(base64_image: str) -> str:
+    map_prompt = """Anda adalah mesin ekstraksi dokumen akademik presisi tinggi.
+    Tugas Anda adalah membaca gambar ini dan memindahkan seluruh teks, rumus, atau konsep ke dalam bentuk digital.
     
-    # --- 3. SYSTEM PROMPT (Mitigasi Skenario #3: Halusinasi) ---
-    system_prompt = """
-    Anda adalah AI Instructional Designer dan Vision-Language Engine tingkat lanjut. Tugas utama Anda adalah memproses gambar dokumen akademik, mengekstrak informasi faktual, dan secara otomatis merancang instrumen pembelajaran (ringkasan, flashcard, dan kuis) ke dalam format JSON terstruktur.
-    KONTEKS:
-    Output Anda akan dikonsumsi langsung secara terprogram oleh aplikasi 'Smart Study Scanner'. Kepatuhan terhadap skema JSON dan akurasi ekstraksi (tanpa halusinasi) adalah prioritas mutlak agar sistem tidak mengalami crash.
+    ATURAN MUTLAK:
+    1. ZERO-SUMMARIZATION: JANGAN merangkum. Ekstrak data mentahnya secara utuh dan seakurat mungkin, pertahankan hierarki aslinya (judul, subjudul, poin-poin).
+    2. ANTI-HALUSINASI: DILARANG menambahkan pengetahuan dari luar gambar.
+    3. PENOLAKAN NOISE: Jika gambar ini BUKAN dokumen, catatan, atau slide presentasi akademik (misal: hanya foto wajah, pemandangan, atau benda acak), Anda WAJIB mengembalikan HANYA string ini persis: "NO_TEXT_FOUND"."""
 
-    LANGKAH KERJA INTERNAL (Terapkan sebelum menghasilkan output):
-    1. Pindai dan analisis gambar yang diberikan.
-    2. Identifikasi apakah gambar memuat teks edukasi/akademik. Jika tidak (misal: foto pemandangan, objek acak, atau teks tidak terbaca), Anda harus langsung mengembalikan JSON error.
-    3. Jika teks valid, ekstrak konsep utama tanpa menambahkan opini atau pengetahuan eksternal.
-    4. Sintesis data menjadi poin ringkasan, pasangan istilah-definisi (flashcard), dan kuis dengan pengecoh (distractor) yang masuk akal.
-
-    ATURAN MUTLAK (MITIGASI HALUSINASI & FORMATTING):
-    1. KUANTITAS WAJIB: Anda WAJIB menghasilkan MINIMAL 3 soal kuis yang berbeda dan 3-5 flashcard. Jika teks terlalu pendek, pecah satu informasi menjadi beberapa sudut pandang pertanyaan agar kuota 3 soal kuis TETAP TERPENUHI.
-    2. ZERO-HALLUCINATION: Anda DILARANG KERAS menggunakan data latih atau pengetahuan dari luar. Seluruh isi ringkasan, flashcard, dan kuis WAJIB 100% bersumber dari teks yang terdeteksi pada gambar.
-    3. STRICT OUTPUT: Anda HANYA diizinkan merespons dengan struktur JSON mentah yang valid. DILARANG menyertakan teks pengantar, penutup, pemikiran (thought process), atau bahkan *markdown code blocks* (seperti ```json).
-    4. ERROR HANDLING: Jika gambar TIDAK berisi dokumen/teks edukasi, Anda WAJIB mengembalikan JSON ini secara persis:
-    {"error": "Teks edukasi tidak ditemukan pada gambar."}
-
-    SKEMA JSON YANG DIWAJIBKAN:
-    {
-        "ringkasan": [
-            "Poin ringkasan 1 yang padat dan komprehensif.",
-            "Poin ringkasan 2 yang berfokus pada konsep inti."
-        ],
-        "flashcards": [
-            {
-                "istilah": "Kata kunci spesifik dari teks",
-                "definisi": "Definisi yang diekstrak langsung dari teks"
-            }
-        ],
-        "kuis": [
-            {
-                "pertanyaan": "Pertanyaan evaluasi 1 yang menguji pemahaman dari teks",
-                "opsi": [
-                    "Jawaban Benar",
-                    "Pengecoh Logis A",
-                    "Pengecoh Logis B",
-                    "Pengecoh Logis C"
-                ],
-                "jawaban_benar": "Jawaban Benar (harus sama persis dengan salah satu string di dalam array opsi)",
-                "penjelasan": "Alasan mengapa jawaban benar berdasarkan informasi spesifik pada gambar."
-            },
-            {
-                "pertanyaan": "Pertanyaan evaluasi 2 yang menguji pemahaman dari teks",
-                "opsi": [
-                    "Jawaban Benar",
-                    "Pengecoh Logis A",
-                    "Pengecoh Logis B",
-                    "Pengecoh Logis C"
-                ],
-                "jawaban_benar": "Jawaban Benar (harus sama persis dengan salah satu string di dalam array opsi)",
-                "penjelasan": "Alasan mengapa jawaban benar berdasarkan informasi spesifik pada gambar."
-            },
-            {
-                "pertanyaan": "Pertanyaan evaluasi 3 yang menguji pemahaman dari teks",
-                "opsi": [
-                    "Jawaban Benar",
-                    "Pengecoh Logis A",
-                    "Pengecoh Logis B",
-                    "Pengecoh Logis C"
-                ],
-                "jawaban_benar": "Jawaban Benar (harus sama persis dengan salah satu string di dalam array opsi)",
-                "penjelasan": "Alasan mengapa jawaban benar berdasarkan informasi spesifik pada gambar."
-            }
-        ]
-    }
-    
-    """
-
-    # --- 4. MULTIMODAL PAYLOAD ARCHITECTURE ---
-    # Memformat pesan agar AI tahu ada gambar dan instruksi yang dikirim bersamaan
     messages = [
-        {"role": "system", "content": system_prompt},
         {
             "role": "user",
             "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}
-                },
-                {
-                    "type": "text",
-                    "text": "Analisis gambar ini dengan cermat dan kembalikan output dalam format JSON sesuai aturan sistem."
-                }
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+                {"type": "text", "text": map_prompt}
             ]
         }
     ]
 
     try:
-        # --- 5. EKSEKUSI API & MITIGASI TOKEN ---
-        # Di dalam fungsi analyze_document, blok try:
+        completion = client.chat.completions.create(
+            model=MODEL_ID2, # Menggunakan Qwen VLM
+            messages=messages,
+            max_tokens=1500, # Dinaikkan agar teks tidak terpotong jika satu halaman penuh tulisan
+            temperature=0.0  # Suhu 0 mutlak untuk ekstraksi faktual tanpa kreativitas
+        )
+        result = completion.choices[0].message.content.strip()
         
-        # Daftar model yang akan dicoba berurutan jika salah satu mati/tidak didukung
-        model_fallbacks = [
-            "google/gemma-3-12b-it-qat-q4_0-unquantized:featherless-ai",
-            "Qwen/Qwen3.5-9B:together",
-            "Qwen/Qwen3-VL-8B-Instruct:novita",
+        if "NO_TEXT_FOUND" in result or not result:
+            return "" 
+            
+        return result
+    except Exception as e:
+        return f"[ERROR_EKSTRAKSI: {str(e)}]"
+
+# --- 3. FASE REDUCE: SINTESIS & FORMATTING (MODEL_ID1: Gemma LLM) ---
+def synthesize_json_reduce(combined_text: str) -> dict:
+    SAFE_LIMIT = 20000 
+    if len(combined_text) > SAFE_LIMIT:
+        combined_text = combined_text[:SAFE_LIMIT] + "... (Teks dipotong demi stabilitas AI)"
+
+    # PROMPT ENTERPRISE UNTUK ADAPTIVE FORMATTING
+    system_prompt = """Anda adalah AI Instructional Designer dan Data Synthesizer tingkat lanjut. 
+    Anda akan menerima gabungan teks mentah dari beberapa halaman dokumen (ditandai dengan pembatas --- HALAMAN X ---).
+    
+    KONTEKS & OUTPUT:
+    Output Anda akan dikonsumsi langsung secara terprogram. Kepatuhan skema JSON adalah prioritas mutlak.
+
+    ATURAN MUTLAK (SINTESIS ADAPTIF & FORMATTING):
+    1. RINGKASAN DINAMIS: 'ringkasan' WAJIB disintesis menggunakan format Markdown yang PALING COCOK dengan konteks materi. 
+       - Gunakan Tabel Markdown jika materi berupa perbandingan.
+       - Gunakan Daftar Berangka (1, 2, 3) jika materi berupa proses/kronologi.
+       - Gunakan kombinasi Heading (###) dan Bullet points untuk konsep umum.
+    2. KUANTITAS WAJIB: Hasilkan 5 hingga 7 soal kuis komprehensif dan MAKSIMAL 10 flashcard.
+    3. ZERO-HALLUCINATION: Seluruh materi WAJIB 100% bersumber dari teks input.
+    4. STRICT OUTPUT: HANYA respons dengan JSON mentah. DILARANG menggunakan markdown code block (```json) di luar struktur JSON.
+
+    SKEMA JSON YANG DIWAJIBKAN:
+    {
+        "ringkasan": "Tuliskan seluruh sintesis materi Anda di sini dalam bentuk SATU string panjang berformat Markdown. Gunakan \\n untuk garis baru (newline) dan sintaks tabel Markdown yang valid jika diperlukan.",
+        "flashcards": [
+            {"istilah": "Istilah Krusial 1", "definisi": "Definisi padat"}
+        ],
+        "kuis": [
+            {
+                "pertanyaan": "Pertanyaan evaluasi analitis?",
+                "opsi": ["Jawaban Benar", "Pengecoh A", "Pengecoh B", "Pengecoh C"],
+                "jawaban_benar": "Jawaban Benar",
+                "penjelasan": "Alasan detail."
+            }
         ]
-        
-        completion = None
-        last_error = ""
+    }"""
 
-        # Loop percobaan ke berbagai model
-        for model in model_fallbacks:
-            try:
-                completion = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    max_tokens=2500,  
-                    temperature=0.1
-                )
-                break # Jika berhasil, keluar dari loop
-            except Exception as e:
-                last_error = str(e)
-                print(f"Model {model} gagal: {last_error}. Mencoba model berikutnya...")
-                continue # Lanjut ke model berikutnya di daftar
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Lakukan sintesis holistik pada teks dokumen multi-halaman berikut:\n\n{combined_text}"}
+    ]
 
-        if not completion:
-            return {"status": "error", "message": f"Seluruh server AI sedang sibuk atau tidak mendukung model VLM saat ini. Error terakhir: {last_error}", "data": None}
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_ID1, # Menggunakan Gemma-3 untuk logika analitis teks
+            messages=messages,
+            max_tokens=3500, # Kuis 5-7 soal dan 10 flashcard butuh jumlah token yang sangat besar
+            temperature=0.15 # Sedikit diberikan suhu kreativitas agar bisa mencari "benang merah"
+        )
         
         result_text = completion.choices[0].message.content
         
-        if not result_text or result_text.strip() == "":
-             return {"status": "error", "message": "Silent Failure: AI mengembalikan data kosong.", "data": None}
-
-        # --- 6. JSON SANITIZATION (Pertahanan Lapis 2) ---
         json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
-        clean_json_string = json_match.group(0) if json_match else result_text
-
-        # --- 7. PARSING & VALIDASI STRUKTURAL ---
-        parsed_data = json.loads(clean_json_string)
+        clean_json = json_match.group(0) if json_match else result_text
+        parsed_data = json.loads(clean_json)
         
-        # Validasi Skenario #3 (Deteksi Gambar Kosong/Bukan Dokumen dari AI)
         if "error" in parsed_data:
             return {"status": "error", "message": parsed_data["error"], "data": None}
             
-        # Validasi Kunci JSON yang Wajib Ada
-        required_keys = ["ringkasan", "flashcards", "kuis"]
-        if all(key in parsed_data for key in required_keys):
-            return {"status": "success", "message": "Pemrosesan VLM berhasil.", "data": parsed_data}
-        else:
-            return {"status": "error", "message": "Struktur JSON tidak lengkap.", "data": None}
+        return {"status": "success", "message": "Sintesis Map-Reduce berhasil.", "data": parsed_data}
 
-    # --- 8. PENANGANAN KONDISI EKSTRIM (ERROR HANDLING) ---
     except json.JSONDecodeError:
-        # Skenario #4: Menangkap error jika teks JSON terpotong
-        return {"status": "error", "message": "Sistem gagal merakit JSON (kemungkinan karena teks terlalu panjang). Coba gunakan gambar dengan teks yang lebih sedikit.", "data": None}
-        
-    except HfHubHTTPError as e:
-        # Skenario #2: Menangkap error spesifik dari Hugging Face (Rate Limit / Cold Start)
-        error_msg = str(e)
-        if "503" in error_msg:
-             return {"status": "error", "message": "Server AI sedang pemanasan (Cold Start). Mesin VLM butuh waktu untuk bangun. Silakan tunggu 30 detik dan coba lagi.", "data": None}
-        elif "429" in error_msg:
-             return {"status": "error", "message": "Terlalu banyak permintaan (Rate Limit). Anda telah mencapai batas kuota server publik. Silakan coba beberapa saat lagi.", "data": None}
-        else:
-             return {"status": "error", "message": f"Gangguan server AI: {error_msg}", "data": None}
-             
+        return {"status": "error", "message": "Gagal merakit JSON karena format AI terpotong. Coba kurangi jumlah gambar.", "data": None}
     except Exception as e:
-        return {"status": "error", "message": f"Terjadi kesalahan tidak terduga: {str(e)}", "data": None}
+        return {"status": "error", "message": f"Gangguan Sintesis Gemma: {str(e)}", "data": None}
+    
+# --- 4. ORKESTRATOR (FUNGSI UTAMA YANG DIPANGGIL app.py) ---
+def run_map_reduce_pipeline(base64_images_list: list) -> dict:
+    extracted_texts = []
+    
+    # 1. JALANKAN FASE MAP (Iterasi Gambar)
+    for index, b64_img in enumerate(base64_images_list):
+        try:
+            teks_halaman = extract_text_map(b64_img)
+            
+            # Jika bukan string kosong (Lolos Skenario #3) dan bukan error, simpan.
+            if teks_halaman and "[ERROR_EKSTRAKSI" not in teks_halaman:
+                extracted_texts.append(f"--- HALAMAN {index + 1} ---\n{teks_halaman}\n")
+                
+            # Mitigasi Skenario #1: Jeda Anti-Spam Server (Throttling)
+            # Kita memaksa AI bernapas 2 detik agar API Hugging Face tidak memblokir IP kita.
+            time.sleep(2)
+            
+        except HfHubHTTPError as e:
+            # MITIGASI RATE LIMIT (429) & TIMEOUT EKSKLUSIF
+            if "429" in str(e):
+                print(f"Peringatan: Rate limit tercapai pada gambar ke-{index+1}. Mengabaikan gambar ini.")
+                time.sleep(5) # Jeda lebih lama untuk mendinginkan server
+                continue # Lanjutkan ke gambar berikutnya alih-alih me-crash-kan seluruh sesi
+            else:
+                continue
+
+    # 2. VALIDASI PASCA-MAP
+    if not extracted_texts:
+        return {"status": "error", "message": "Tidak ada teks valid yang berhasil diekstrak dari seluruh gambar.", "data": None}
+        
+    # 3. JALANKAN FASE REDUCE
+    gabungan_teks_utuh = "\n".join(extracted_texts)
+    hasil_akhir = synthesize_json_reduce(gabungan_teks_utuh)
+    
+    return hasil_akhir
