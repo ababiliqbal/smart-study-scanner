@@ -1,8 +1,9 @@
 import io
 import csv
+from PIL import Image
 import streamlit as st
-from modules.ocr_engine import extract_text_from_image
-from modules.nlp_engine import summarize_text
+from modules.vision_utils import compress_image, image_to_base64
+from modules.vlm_engine import analyze_document
 
 # --- 1. KONFIGURASI DASAR UI MOBILE ---
 st.set_page_config(
@@ -34,15 +35,13 @@ def generate_csv_from_flashcards(flashcards_data: list) -> bytes:
 
 # --- 2. INISIALISASI BRANKAS MEMORI (SESSION STATE) ---
 if "uploaded_image" not in st.session_state:
-    st.session_state.uploaded_image = None
-if "raw_text" not in st.session_state:             
-    st.session_state.raw_text = None                
+    st.session_state.uploaded_image = None                
 if "processed_data" not in st.session_state:
-    st.session_state.processed_data = None  # Menyimpan JSON utuh dari AI
+    st.session_state.processed_data = None  
 if "quiz_submitted" not in st.session_state:
-    st.session_state.quiz_submitted = False # Menandai apakah kuis sudah dikerjakan
+    st.session_state.quiz_submitted = False 
 if "user_answers" not in st.session_state:
-    st.session_state.user_answers = {}      # Menyimpan jawaban kuis pengguna
+    st.session_state.user_answers = {}      
 
 # --- 3. KONSTANTA KEAMANAN SISTEM ---
 MAX_FILE_SIZE_MB = 5
@@ -100,32 +99,42 @@ if st.session_state.uploaded_image is not None:
     # Ketika tombol ini diklik oleh pengguna
     if st.button("Proses Catatan", type="primary", use_container_width=True):
             
-            # --- PROTEKSI MEMORI: Cek apakah gambar benar-benar ada di brankas ---
             if st.session_state.uploaded_image is None:
                 st.warning("⚠️ Tidak ada gambar di memori. Silakan unggah atau potret gambar terlebih dahulu.")
             else:
-                with st.spinner("🧠 Membaca dan Menganalisis Catatan..."):
-                    
-                    # 1. Ekstrak OCR dengan mengambil gambar langsung dari session_state
-                    gambar_aktif = st.session_state.uploaded_image
-                    extracted_text = extract_text_from_image(gambar_aktif)
-                    
-                    if extracted_text.strip() == "":
-                        st.error("Teks tidak terdeteksi. Pastikan gambar tidak terlalu buram.")
-                    else:
-                        # 2. Kirim ke NLP Engine
-                        response = summarize_text(extracted_text)
+                # Mengubah indikator teks agar pengguna sadar bahwa AI sedang "Melihat"
+                with st.spinner("👁️🧠 AI sedang melihat dan menganalisis catatanmu..."):
+                    try:
+                        gambar_aktif = st.session_state.uploaded_image
                         
-                        # 3. Validasi Respons Terstruktur (API-like)
+                        if isinstance(gambar_aktif, Image.Image):
+                            img_pil = gambar_aktif
+                        else:
+                            img_pil = Image.open(gambar_aktif)
+                            
+                        # 1. PRA-PEMROSESAN (Mitigasi Skenario Ekstrim #1: Mencegah OOM/Timeout)
+                        gambar_kompresi = compress_image(img_pil)
+                        
+                        # 2. ENCODING BASE64
+                        base64_str = image_to_base64(gambar_kompresi)
+                        
+                        # 3. INFERENSI VLM MULTIMODAL
+                        response = analyze_document(base64_str)
+                        
+                        # 4. PENANGANAN RESPON
                         if response["status"] == "success":
-                        
-                            # --- SIMPAN TEKS MENTAH DAN HASIL AI KE MEMORI ---
-                            st.session_state.raw_text = extracted_text      
+                            # Menyimpan hasil akhir ke memori
                             st.session_state.processed_data = response["data"]
-                        
+                            
                             st.session_state.quiz_submitted = False
                             st.session_state.user_answers = {}
-                            st.rerun()
+                            st.rerun() 
+                        else:
+                            # Jika Skenario Ekstrim #2, #3, atau #4 terjadi, pesan error-nya akan muncul di sini
+                            st.error(f"🛑 Gagal memproses AI: {response['message']}")
+                            
+                    except Exception as e:
+                        st.error(f"⚙️ Terjadi kesalahan sistem internal: {str(e)}")
 
 
 if st.session_state.processed_data:
@@ -141,35 +150,22 @@ if st.session_state.processed_data:
         "🗂️ Flashcards"
     ])
     
-    # TAB 1: RINGKASAN & TEKS ASLI
+    # TAB 1: RINGKASAN MATERI
     with tab_ringkasan:
         st.subheader("📝 Intisari Catatan")
         
-        # Mengambil data ringkasan (kini berupa Array/List)
+        # Memberikan feedback visual bahwa ini adalah hasil VLM
+        st.caption("✨ *Dianalisis secara visual menggunakan Vision-Language Model.*")
+        st.write("---")
+        
         ringkasan_list = data.get("ringkasan", [])
         
-        # Render bullet points secara dinamis
         if isinstance(ringkasan_list, list):
             for poin in ringkasan_list:
                 st.markdown(f"- {poin}")
         else:
-            # Fallback jika AI bandel dan tetap mengirim String
             st.write(ringkasan_list)
             
-        st.write("---")
-        
-        # Mengembalikan Teks OCR Mentah dengan antarmuka Expander yang elegan
-        with st.expander("🔍 Lihat Teks Asli (Hasil Pindaian OCR)"):
-            st.info("Teks di bawah ini adalah hasil pembacaan mentah oleh mesin visi komputer. Gunakan untuk memverifikasi apakah ada huruf yang salah dipindai.")
-            
-            # Gunakan text_area agar teks panjang bisa di-scroll tanpa memakan ruang halaman
-            st.text_area(
-                "Teks Mentah", 
-                value=st.session_state.raw_text, 
-                height=250, 
-                disabled=True, 
-                label_visibility="collapsed"
-            )
     
     # TAB 2: KUIS & AUTOMATED GRADING
     with tab_kuis:
@@ -273,7 +269,6 @@ if st.session_state.processed_data:
     st.write("---")
     if st.button("🔄 Pindai Catatan Baru", type="secondary", use_container_width=True):
         st.session_state.uploaded_image = None
-        st.session_state.raw_text = None            # <-- TAMBAHKAN BARIS INI
         st.session_state.processed_data = None
         st.session_state.quiz_submitted = False
         st.session_state.user_answers = {}
