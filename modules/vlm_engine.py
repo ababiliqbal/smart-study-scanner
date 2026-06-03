@@ -15,8 +15,8 @@ if not HF_API_TOKEN:
 
 client = InferenceClient(api_key=HF_API_TOKEN)
 # Menggunakan VLM tingkat atas dari Qwen
-MODEL_ID1 = "Qwen/Qwen3-Coder-Next:featherless-ai" 
-MODEL_ID2 = "Qwen/Qwen3.5-9B:together" 
+MODEL_ID1 = "openai/gpt-oss-120b:groq" 
+MODEL_ID2 = "Qwen/Qwen3.5-397B-A17B:together" 
 
 # --- 2. FASE MAP: EKSTRAKSI VISUAL (MODEL_ID2: Qwen VLM) ---
 def extract_text_map(base64_image: str) -> str:
