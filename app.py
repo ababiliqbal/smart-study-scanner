@@ -302,14 +302,14 @@ if st.session_state.processed_data:
             csv_bytes = generate_csv_from_flashcards(flashcards_data)
             
             # Tombol Unduh Bawaan Streamlit
-            st.download_button(
-                label="📥 Unduh Flashcards (.csv)",
-                data=csv_bytes,
-                file_name="smart_study_flashcards.csv",
-                mime="text/csv",
-                type="primary",
-                use_container_width=True
-            )
+            # st.download_button(
+            #     label="📥 Unduh Flashcards (.csv)",
+            #     data=csv_bytes,
+            #     file_name="smart_study_flashcards.csv",
+            #     mime="text/csv",
+            #     type="primary",
+            #     use_container_width=True
+            # )
 
     # --- SIKLUS UX BERULANG (RESET) ---
     st.write("---")

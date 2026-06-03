@@ -2,21 +2,29 @@ import os
 import re
 import json
 import time
+import itertools
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
 from huggingface_hub.errors import HfHubHTTPError
 
 # --- 1. INISIALISASI KEAMANAN & KONEKSI ---
 load_dotenv()
-HF_API_TOKEN = os.getenv("HUGGINGFACE_API_KEY")
 
-if not HF_API_TOKEN:
-    raise ValueError("KRITIS: HUGGINGFACE_API_KEY tidak ditemukan di file .env.")
+# Ambil satu string panjang yang berisi semua key
+raw_keys_string = os.getenv("HUGGINGFACE_API_POOL", "")
 
-client = InferenceClient(api_key=HF_API_TOKEN)
+# Potong string berdasarkan koma dan bersihkan dari spasi tak sengaja
+VALID_KEYS = [key.strip() for key in raw_keys_string.split(",") if key.strip()]
+
+if not VALID_KEYS:
+    raise ValueError("KRITIS: Tidak ada HUGGINGFACE_API_KEY yang ditemukan di file .env.")
+
+# Kumpulan Kunci API yang berputar terus menerus
+API_POOL = itertools.cycle(VALID_KEYS)
+
 # Menggunakan VLM tingkat atas dari Qwen
-MODEL_ID1 = "openai/gpt-oss-120b:groq" 
-MODEL_ID2 = "Qwen/Qwen3.5-397B-A17B:together" 
+MODEL_ID1 = "Qwen/Qwen3-Coder-Next:novita" 
+MODEL_ID2 = "Qwen/Qwen3.5-397B-A17B:together"
 
 # --- 2. FASE MAP: EKSTRAKSI VISUAL (MODEL_ID2: Qwen VLM) ---
 def extract_text_map(base64_image: str) -> str:
@@ -37,22 +45,39 @@ def extract_text_map(base64_image: str) -> str:
             ]
         }
     ]
-
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL_ID2, # Menggunakan Qwen VLM
-            messages=messages,
-            max_tokens=1500, # Dinaikkan agar teks tidak terpotong jika satu halaman penuh tulisan
-            temperature=0.0  # Suhu 0 mutlak untuk ekstraksi faktual tanpa kreativitas
-        )
-        result = completion.choices[0].message.content.strip()
+    
+    maks_percobaan = len(VALID_KEYS)
+    
+    for percobaan in range(maks_percobaan):
+        kunci_sekarang = next(API_POOL)
+        client_rotasi = InferenceClient(api_key=kunci_sekarang) # Buat klien baru dengan kunci giliran
         
-        if "NO_TEXT_FOUND" in result or not result:
-            return "" 
+        try:
+            completion = client_rotasi.chat.completions.create( # Ubah client menjadi client_rotasi
+                model=MODEL_ID2,
+                messages=messages,
+                max_tokens=1500,
+                temperature=0.0 
+            )
+            result = completion.choices[0].message.content.strip()
             
-        return result
-    except Exception as e:
-        return f"[ERROR_EKSTRAKSI: {str(e)}]"
+            if "NO_TEXT_FOUND" in result or not result:
+                return "" 
+                
+            return result
+            
+        except Exception as e:
+            error_msg = str(e)
+            # Tangkap jika error karena limit (402 atau 429)
+            if "402" in error_msg or "429" in error_msg:
+                print(f"[Rotasi Map] Kunci ke-{percobaan+1} limit. Pindah kunci...")
+                continue # Skip dan coba kunci berikutnya
+            else:
+                print(f"\n[DEBUG FATAL] Kunci ke-{percobaan+1} GAGAL karena: {error_msg}\n")
+                return f"[ERROR_EKSTRAKSI: {error_msg}]"
+                
+    # Jika loop selesai tapi gagal semua
+    return "[ERROR_EKSTRAKSI: Semua kunci API telah mencapai limit]"
 
 # --- 3. FASE REDUCE: SINTESIS & FORMATTING (MODEL_ID1: Gemma LLM) ---
 def synthesize_json_reduce(combined_text: str) -> dict:
@@ -97,29 +122,42 @@ def synthesize_json_reduce(combined_text: str) -> dict:
         {"role": "user", "content": f"Lakukan sintesis holistik pada teks dokumen multi-halaman berikut:\n\n{combined_text}"}
     ]
 
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL_ID1, # Menggunakan Gemma-3 untuk logika analitis teks
-            messages=messages,
-            max_tokens=3500, # Kuis 5-7 soal dan 10 flashcard butuh jumlah token yang sangat besar
-            temperature=0.15 # Sedikit diberikan suhu kreativitas agar bisa mencari "benang merah"
-        )
+    maks_percobaan = len(VALID_KEYS)
+    
+    for percobaan in range(maks_percobaan):
+        kunci_sekarang = next(API_POOL)
+        client_rotasi = InferenceClient(api_key=kunci_sekarang)
         
-        result_text = completion.choices[0].message.content
-        
-        json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
-        clean_json = json_match.group(0) if json_match else result_text
-        parsed_data = json.loads(clean_json)
-        
-        if "error" in parsed_data:
-            return {"status": "error", "message": parsed_data["error"], "data": None}
+        try:
+            completion = client_rotasi.chat.completions.create( # Ubah client menjadi client_rotasi
+                model=MODEL_ID1,
+                messages=messages,
+                max_tokens=3500,
+                temperature=0.15
+            )
             
-        return {"status": "success", "message": "Sintesis Map-Reduce berhasil.", "data": parsed_data}
+            result_text = completion.choices[0].message.content
+            json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+            clean_json = json_match.group(0) if json_match else result_text
+            parsed_data = json.loads(clean_json)
+            
+            if "error" in parsed_data:
+                return {"status": "error", "message": parsed_data["error"], "data": None}
+                
+            return {"status": "success", "message": "Sintesis Map-Reduce berhasil.", "data": parsed_data}
 
-    except json.JSONDecodeError:
-        return {"status": "error", "message": "Gagal merakit JSON karena format AI terpotong. Coba kurangi jumlah gambar.", "data": None}
-    except Exception as e:
-        return {"status": "error", "message": f"Gangguan Sintesis Gemma: {str(e)}", "data": None}
+        except json.JSONDecodeError:
+            return {"status": "error", "message": "Gagal merakit JSON karena format AI terpotong. Coba kurangi jumlah gambar.", "data": None}
+        except Exception as e:
+            error_msg = str(e)
+            if "402" in error_msg or "429" in error_msg:
+                print(f"[Rotasi Reduce] Kunci ke-{percobaan+1} limit. Pindah kunci...")
+                continue # Skip dan coba kunci berikutnya
+            else:
+                # Teks error sudah diubah menjadi Qwen
+                return {"status": "error", "message": f"Gangguan Sintesis Qwen: {error_msg}", "data": None}
+                
+    return {"status": "error", "message": "Gagal memproses AI: Seluruh API Key Hugging Face telah limit (402).", "data": None}
     
 # --- 4. ORKESTRATOR (FUNGSI UTAMA YANG DIPANGGIL app.py) ---
 def run_map_reduce_pipeline(base64_images_list: list) -> dict:
