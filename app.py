@@ -295,8 +295,8 @@ if st.session_state.processed_data:
             st.write("---")
             
             # --- FITUR EKSPOR (PORTABILITAS DATA) ---
-            st.subheader("💾 Ekspor ke Aplikasi Belajar")
-            st.write("Unduh data flashcard ini dalam format `.csv` untuk diimpor ke aplikasi seperti **Anki** atau **Quizlet**.")
+            # st.subheader("💾 Ekspor ke Aplikasi Belajar")
+            # st.write("Unduh data flashcard ini dalam format `.csv` untuk diimpor ke aplikasi seperti **Anki** atau **Quizlet**.")
             
             # Merakit file CSV di dalam memori
             csv_bytes = generate_csv_from_flashcards(flashcards_data)
